@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: edge-ai-backend
+    runtime: docker
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    autoDeploy: true

@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image
 from torchvision import transforms, models
 
-INPUT_SIZE = (512, 512)
+INPUT_SIZE = (224, 224)
 CLASS_NAMES = ["Mixed", "Not Mixed"]
 
 
@@ -50,7 +50,7 @@ def load_model():
     model = modify_densenet_input_channels(model, in_channels=9)
     model.classifier = nn.Linear(model.classifier.in_features, 2)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
 
     # Load trained weights
     model_path = "Code/best_densenet_9ch.pth"

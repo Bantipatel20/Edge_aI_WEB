@@ -214,6 +214,11 @@ def main():
     st.markdown(
         """
     <style>
+        :root {
+            --ink-strong: #1f2f46;
+            --ink-muted: #4f647f;
+        }
+
         /* Remove top padding */
         .block-container {
             padding-top: 1rem !important;
@@ -222,6 +227,30 @@ def main():
         /* Light theme base */
         .stApp {
             background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
+            color: var(--ink-strong);
+        }
+
+        p, span, label, small, div {
+            color: var(--ink-strong);
+        }
+
+        /* Streamlit widget labels and helper text */
+        [data-testid="stWidgetLabel"] > div,
+        [data-testid="stWidgetLabel"] label,
+        [data-testid="stFileUploader"] small,
+        [data-testid="stFileUploaderDropzoneInstructions"],
+        [data-testid="stFileUploaderDropzone"] small,
+        [data-baseweb="radio"] label,
+        [role="radiogroup"] label,
+        [data-testid="stMarkdownContainer"] p {
+            color: var(--ink-strong) !important;
+            opacity: 1 !important;
+        }
+
+        /* Secondary text tone */
+        .stCaption,
+        [data-testid="stCaptionContainer"] {
+            color: var(--ink-muted) !important;
         }
 
         /* Navbar styling */

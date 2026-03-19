@@ -2,8 +2,8 @@ services:
   - type: web
     name: drug-classifier
     env: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: python -m pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
     startCommand: streamlit run app.py --server.port 10000 --server.address 0.0.0.0
     envVars:
       - key: PYTHON_VERSION
-        value: 3.10
+        value: 3.8.1

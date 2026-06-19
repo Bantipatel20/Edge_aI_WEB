@@ -6,9 +6,9 @@ import numpy as np
 from PIL import Image
 from torchvision import transforms, models
 
-INPUT_SIZE = (224, 224)
-CLASS_NAMES = ["Mixed", "Not Mixed"]
 
+INPUT_SIZE = (512, 512)
+CLASS_NAMES = ["Mixed", "Not Mixed"]
 
 # ----------------------------------------------------------
 # MODEL SETUP
@@ -25,22 +25,20 @@ def get_last_conv_layer(model):
 @st.cache_resource
 def load_model():
     """Load trained DenseNet model, target layer, and device."""
-
     def modify_densenet_input_channels(model, in_channels=9):
         conv = model.features.conv0
         new_conv = nn.Conv2d(
-            in_channels,
-            conv.out_channels,
+            in_channels, conv.out_channels,
             kernel_size=conv.kernel_size,
             stride=conv.stride,
             padding=conv.padding,
-            bias=False,
+            bias=False
         )
 
         with torch.no_grad():
             new_conv.weight[:, :3] = conv.weight
             for i in range(3, in_channels):
-                new_conv.weight[:, i : i + 1] = conv.weight[:, i % 3 : i % 3 + 1]
+                new_conv.weight[:, i:i+1] = conv.weight[:, i % 3:i % 3 + 1]
 
         model.features.conv0 = new_conv
         return model
@@ -50,8 +48,8 @@ def load_model():
     model = modify_densenet_input_channels(model, in_channels=9)
     model.classifier = nn.Linear(model.classifier.in_features, 2)
 
-    device = torch.device("cpu")
-
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
     # Load trained weights
     model_path = "Code/best_densenet_9ch.pth"
     model.load_state_dict(torch.load(model_path, map_location=device))
@@ -61,39 +59,37 @@ def load_model():
     target_layer = get_last_conv_layer(model)
     if target_layer is None:
         raise RuntimeError("Could not find a Conv2d layer for Grad-CAM.")
-
+    
     return model, target_layer, device
 
-
 def preprocess_image(image):
-    """Preprocess image to 9-channel format (RGB + HSV + LAB)."""
+    """Preprocess image to 9-channel format (RGB + HSV + LAB)"""
     # Resize image
     transform = transforms.Resize(INPUT_SIZE)
     img = transform(image)
     img = np.array(img)
-
+    
     # Convert RGB to HSV and LAB
     hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
     lab = cv2.cvtColor(img, cv2.COLOR_RGB2Lab)
-
+    
     # Combine all channels (9 channels total)
     combined = np.concatenate([img, hsv, lab], axis=2)
     combined = combined.transpose(2, 0, 1) / 255.0
-
+    
     # Convert to tensor
     tensor = torch.tensor(combined, dtype=torch.float32).unsqueeze(0)
     return tensor
 
-
 def predict(model, image_tensor, device):
-    """Make prediction on preprocessed image."""
+    """Make prediction on preprocessed image"""
     with torch.no_grad():
         output = model(image_tensor.to(device))
         probabilities = torch.nn.functional.softmax(output, dim=1)
         prediction = output.argmax(1).item()
         confidence = probabilities[0][prediction].item()
-
-    return prediction, confidence, probabilities[0].detach().cpu().numpy()
+    
+    return prediction, confidence, probabilities[0].numpy()
 
 
 def generate_gradcam_overlay(model, target_layer, image_tensor, original_rgb, class_index, device):
@@ -121,7 +117,7 @@ def generate_gradcam_overlay(model, target_layer, image_tensor, original_rgb, cl
             score.backward()
 
         if not activations or not gradients:
-            return original_rgb, original_rgb
+            return original_rgb
 
         activation_map = activations[0]
         gradient_map = gradients[0]
@@ -149,25 +145,25 @@ def generate_gradcam_overlay(model, target_layer, image_tensor, original_rgb, cl
 def extract_feature_maps(model, image_tensor, device, num_features=16):
     """Extract feature maps from the first convolutional layer."""
     feature_maps = []
-
-    def hook(_module, _input, output):
+    
+    def hook(module, input, output):
         feature_maps.append(output)
-
+    
     # Register hook on first conv layer
     handle = model.features.conv0.register_forward_hook(hook)
-
+    
     try:
         with torch.no_grad():
             _ = model(image_tensor.to(device))
-
+        
         if feature_maps:
-            fmaps = feature_maps[0][0].detach().cpu().numpy()  # [C, H, W]
+            fmaps = feature_maps[0][0].cpu().numpy()  # [C, H, W]
             # Take first num_features channels
-            fmaps = fmaps[: min(num_features, fmaps.shape[0])]
+            fmaps = fmaps[:min(num_features, fmaps.shape[0])]
             return fmaps
     finally:
         handle.remove()
-
+    
     return None
 
 
@@ -175,10 +171,10 @@ def create_feature_map_grid(feature_maps, cols=4):
     """Create a grid visualization of feature maps."""
     if feature_maps is None:
         return None
-
+    
     num_maps = len(feature_maps)
     rows = (num_maps + cols - 1) // cols
-
+    
     # Normalize each feature map
     normalized_maps = []
     for fm in feature_maps:
@@ -186,18 +182,17 @@ def create_feature_map_grid(feature_maps, cols=4):
         fm_colored = cv2.applyColorMap(np.uint8(fm_norm * 255), cv2.COLORMAP_VIRIDIS)
         fm_colored = cv2.cvtColor(fm_colored, cv2.COLOR_BGR2RGB)
         normalized_maps.append(fm_colored)
-
+    
     # Get dimensions
     h, w = normalized_maps[0].shape[:2]
-
+    
     # Create grid
     grid = np.zeros((rows * h, cols * w, 3), dtype=np.uint8)
     for idx, fm in enumerate(normalized_maps):
         r, c = idx // cols, idx % cols
-        grid[r * h : (r + 1) * h, c * w : (c + 1) * w] = fm
-
+        grid[r*h:(r+1)*h, c*w:(c+1)*w] = fm
+    
     return grid
-
 
 # ----------------------------------------------------------
 # STREAMLIT APP
@@ -207,52 +202,26 @@ def main():
         page_title="EDGE AI - Drug Classification",
         page_icon="🧠",
         layout="wide",
-        initial_sidebar_state="collapsed",
+        initial_sidebar_state="collapsed"
     )
-
+    
     # Custom CSS for professional light theme
-    st.markdown(
-        """
+    st.markdown("""
     <style>
-        :root {
-            --ink-strong: #1f2f46;
-            --ink-muted: #4f647f;
-        }
-
         /* Remove top padding */
         .block-container {
             padding-top: 1rem !important;
         }
-
+        
         /* Light theme base */
         .stApp {
             background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
-            color: var(--ink-strong);
         }
-
-        p, span, label, small, div {
-            color: var(--ink-strong);
+        /* Force readable text color */
+        .stApp, body, p, span, label, small, div {
+            color: #000000 !important;
         }
-
-        /* Streamlit widget labels and helper text */
-        [data-testid="stWidgetLabel"] > div,
-        [data-testid="stWidgetLabel"] label,
-        [data-testid="stFileUploader"] small,
-        [data-testid="stFileUploaderDropzoneInstructions"],
-        [data-testid="stFileUploaderDropzone"] small,
-        [data-baseweb="radio"] label,
-        [role="radiogroup"] label,
-        [data-testid="stMarkdownContainer"] p {
-            color: var(--ink-strong) !important;
-            opacity: 1 !important;
-        }
-
-        /* Secondary text tone */
-        .stCaption,
-        [data-testid="stCaptionContainer"] {
-            color: var(--ink-muted) !important;
-        }
-
+        
         /* Navbar styling */
         .navbar {
             background: linear-gradient(90deg, #1a365d 0%, #2c5282 100%);
@@ -274,12 +243,12 @@ def main():
             font-size: 0.9rem;
             margin: 0.5rem 0 0 0;
         }
-
+        
         /* Hide sidebar */
         [data-testid="stSidebar"] {
             display: none;
         }
-
+        
         /* Card styling */
         .card {
             background: white;
@@ -288,7 +257,7 @@ def main():
             box-shadow: 0 2px 10px rgba(0,0,0,0.08);
             margin-bottom: 1rem;
         }
-
+        
         /* Result cards */
         .result-mixed {
             background: linear-gradient(135deg, #fed7d7 0%, #feb2b2 100%);
@@ -302,18 +271,18 @@ def main():
             padding: 1rem 1.5rem;
             border-radius: 8px;
         }
-
+        
         /* Headers */
         h2, h3 {
             color: #2d3748;
         }
-
+        
         /* Metric styling */
         [data-testid="stMetricValue"] {
             font-size: 1.8rem;
             color: #2c5282;
         }
-
+        
         /* Button styling */
         .stButton > button {
             background: linear-gradient(90deg, #2c5282 0%, #1a365d 100%);
@@ -326,19 +295,19 @@ def main():
         .stButton > button:hover {
             background: linear-gradient(90deg, #1a365d 0%, #2c5282 100%);
         }
-
+        
         /* File uploader */
         [data-testid="stFileUploader"] {
             background: white;
             border-radius: 12px;
             padding: 1rem;
         }
-
+        
         /* Info boxes */
         .stAlert {
             border-radius: 8px;
         }
-
+        
         /* Hide default header, deploy button, and menu */
         header[data-testid="stHeader"] {
             display: none;
@@ -352,7 +321,7 @@ def main():
         #MainMenu {
             display: none;
         }
-
+        
         /* Divider */
         .divider {
             height: 2px;
@@ -360,33 +329,28 @@ def main():
             margin: 1.5rem 0;
         }
     </style>
-
+    
     <div class="navbar">
         <h1>🧠 EDGE AI</h1>
         <p>Drug Classification System | Powered by DenseNet121</p>
     </div>
-    """,
-        unsafe_allow_html=True,
-    )
-
-    try:
-        with st.spinner("Loading model..."):
-            model, target_layer, device = load_model()
-    except Exception as exc:
-        st.error(f"Model loading failed: {exc}")
-        st.stop()
-
+    """, unsafe_allow_html=True)
+    
+    # Load model
+    with st.spinner("Loading model..."):
+        model, target_layer, device = load_model()
+    
     # Main content area
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    col_input, _col_spacer = st.columns([3, 1])
+    
+    col_input, col_spacer = st.columns([3, 1])
     with col_input:
         input_mode = st.radio(
             "📷 Select Input Method",
             options=["Upload Image", "Camera"],
             horizontal=True,
         )
-
+    
     if input_mode == "Upload Image":
         input_file = st.file_uploader(
             "Choose an image...",
@@ -395,7 +359,7 @@ def main():
         )
     else:
         input_file = st.camera_input("Capture an image")
-
+    
     if input_file is not None:
         image = Image.open(input_file).convert("RGB")
         original_rgb = np.array(image)
@@ -403,9 +367,9 @@ def main():
         with st.spinner("Analyzing image and generating visualizations..."):
             image_tensor = preprocess_image(image)
             prediction, confidence, probabilities = predict(model, image_tensor, device)
-
+            
             # Generate Grad-CAM for predicted class
-            gradcam_overlay, _raw_heatmap = generate_gradcam_overlay(
+            gradcam_overlay, raw_heatmap = generate_gradcam_overlay(
                 model=model,
                 target_layer=target_layer,
                 image_tensor=image_tensor,
@@ -413,7 +377,7 @@ def main():
                 class_index=prediction,
                 device=device,
             )
-
+            
             # Generate Grad-CAM for both classes
             gradcam_mixed, heatmap_mixed = generate_gradcam_overlay(
                 model=model,
@@ -423,7 +387,7 @@ def main():
                 class_index=0,  # Mixed
                 device=device,
             )
-
+            
             gradcam_notmixed, heatmap_notmixed = generate_gradcam_overlay(
                 model=model,
                 target_layer=target_layer,
@@ -432,7 +396,7 @@ def main():
                 class_index=1,  # Not Mixed
                 device=device,
             )
-
+            
             # Extract feature maps
             feature_maps = extract_feature_maps(model, image_tensor, device, num_features=16)
             feature_grid = create_feature_map_grid(feature_maps)
@@ -449,7 +413,7 @@ def main():
         with col2:
             st.markdown(f"#### 🔥 Grad-CAM ({predicted_class})")
             st.image(gradcam_overlay, use_container_width=True)
-
+        
         # Row 2: Grad-CAM for both classes
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown("### 🎯 Grad-CAM Comparison (Both Classes)")
@@ -460,7 +424,7 @@ def main():
         with col4:
             st.markdown("#### 🟢 Not Mixed Class Attention")
             st.image(gradcam_notmixed, use_container_width=True)
-
+        
         # Row 3: Raw Heatmaps
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown("### 🌡️ Raw Heatmaps (Without Overlay)")
@@ -471,7 +435,7 @@ def main():
         with col6:
             st.markdown("#### Not Mixed Heatmap")
             st.image(heatmap_notmixed, use_container_width=True)
-
+        
         # Row 4: Feature Maps
         if feature_grid is not None:
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
@@ -482,30 +446,24 @@ def main():
         # Results section
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown("### 📊 Classification Result")
-
+        
         if predicted_class == "Mixed":
-            st.markdown(
-                """
+            st.markdown(f'''
                 <div class="result-mixed">
                     <h2 style="margin:0; color:#c53030;">🔴 MIXED</h2>
                     <p style="margin:0.5rem 0 0 0; color:#742a2a;">Drug mixture detected</p>
                 </div>
-            """,
-                unsafe_allow_html=True,
-            )
+            ''', unsafe_allow_html=True)
         else:
-            st.markdown(
-                """
+            st.markdown(f'''
                 <div class="result-notmixed">
                     <h2 style="margin:0; color:#276749;">🟢 NOT MIXED</h2>
                     <p style="margin:0.5rem 0 0 0; color:#22543d;">Single drug detected</p>
                 </div>
-            """,
-                unsafe_allow_html=True,
-            )
-
+            ''', unsafe_allow_html=True)
+        
         st.markdown("<br>", unsafe_allow_html=True)
-
+        
         # Metrics in cards
         metric_col1, metric_col2, metric_col3 = st.columns(3)
         with metric_col1:
@@ -522,32 +480,25 @@ def main():
             "Mixed": probabilities[0] * 100,
             "Not Mixed": probabilities[1] * 100,
         }
-        st.bar_chart(prob_dict)
-
+        st.bar_chart(prob_dict, color="#2c5282")
+    
     else:
         # Empty state with guidance
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        st.markdown(
-            """
+        st.markdown("""
         <div style="text-align: center; padding: 3rem; background: white; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);">
             <h3 style="color: #2d3748; margin-bottom: 1rem;">Ready for Analysis</h3>
             <p style="color: #718096; font-size: 1.1rem;">Upload an image or capture one using your camera to begin classification</p>
         </div>
-        """,
-            unsafe_allow_html=True,
-        )
-
+        """, unsafe_allow_html=True)
+    
     # Footer
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown(
-        """
+    st.markdown("""
     <div style="text-align: center; padding: 1rem; color: #718096; font-size: 0.85rem;">
         EDGE AI | Built for Edge Inference | DenseNet121 + Grad-CAM
     </div>
-    """,
-        unsafe_allow_html=True,
-    )
-
+    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
